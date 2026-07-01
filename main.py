@@ -22,6 +22,13 @@ from keras import layers
 from datasets import load_dataset
 from collections import Counter
 import requests
+from sklearn.metrics import (
+    precision_recall_fscore_support,
+    accuracy_score,
+    classification_report,
+)
+
+import matplotlib.pyplot as plt
 
 # Скрываем вывод oneDNN
 tf.get_logger().setLevel('ERROR')
@@ -299,18 +306,22 @@ class CustomNonPaddingTokenLoss(keras.losses.Loss):
 
 # 9. Компиляция и обучение
 tf.config.run_functions_eagerly(True)
-ner_model.compile(optimizer="adam", loss=CustomNonPaddingTokenLoss())
+ner_model.compile(
+    optimizer="adam",
+    loss=CustomNonPaddingTokenLoss(),
+    metrics=["accuracy"]
+)
 
 print("Начинаем обучение...")
 history = ner_model.fit(
     train_dataset,
     validation_data=val_dataset,
-    epochs=1,
+    epochs=5,
     verbose=1
 )
 
 
-# 10. Пример инференса (предсказания) - ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ
+# 10. Пример инференса (предсказания)
 def tokenize_and_convert_to_ids(text):
     tokens = text.split()
     return lowercase_and_convert_to_ids(tokens)
