@@ -19,7 +19,6 @@ from keras import ops
 import numpy as np
 import tensorflow as tf
 from keras import layers
-from datasets import load_dataset
 from collections import Counter
 import requests
 from sklearn.metrics import (
@@ -33,43 +32,48 @@ import matplotlib.pyplot as plt
 # Скрываем вывод oneDNN
 tf.get_logger().setLevel('ERROR')
 
+EPOCHS = 5
+EMBED_DIM = 32
+NUM_HEADS = 4
+FF_DIM = 64
+BATCH_SIZE = 32
 
-def download_conll_manually():
-    """Скачивает CoNLL 2003 датасет вручную из рабочего источника"""
-
-    # Создаем директорию для данных
-    os.makedirs("data/conll2003", exist_ok=True)
-
-    # Используем зеркало с GitHub, где есть эти файлы
-    base_url = "https://raw.githubusercontent.com/patverga/torch-ner-nlp-from-scratch/master/data/conll2003/"
-
-    files = {
-        "train.txt": "eng.train",
-        "valid.txt": "eng.testa",
-        "test.txt": "eng.testb"
-    }
-
-    for local_name, remote_name in files.items():
-        url = base_url + remote_name
-        print(f"Скачиваю {remote_name}...")
-
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-
-            with open(f"data/conll2003/{local_name}", 'w', encoding='utf-8') as f:
-                f.write(response.text)
-            print(f"  {remote_name} успешно скачан")
-
-        except requests.exceptions.RequestException as e:
-            print(f"  Ошибка при скачивании {remote_name}: {e}")
-            raise
-
-    print("Датасет успешно скачан!")
-    return "data/conll2003"
-
-
-# print("Скачивание датасета...")
+# def download_conll_manually():
+#     """Скачивает CoNLL 2003 датасет вручную из рабочего источника"""
+#
+#     # Создаем директорию для данных
+#     os.makedirs("data/conll2003", exist_ok=True)
+#
+#     # Используем зеркало с GitHub, где есть эти файлы
+#     base_url = "https://raw.githubusercontent.com/patverga/torch-ner-nlp-from-scratch/master/data/conll2003/"
+#
+#     files = {
+#         "train.txt": "eng.train",
+#         "valid.txt": "eng.testa",
+#         "test.txt": "eng.testb"
+#     }
+#
+#     for local_name, remote_name in files.items():
+#         url = base_url + remote_name
+#         print(f"Скачиваю {remote_name}...")
+#
+#         try:
+#             response = requests.get(url, timeout=30)
+#             response.raise_for_status()
+#
+#             with open(f"data/conll2003/{local_name}", 'w', encoding='utf-8') as f:
+#                 f.write(response.text)
+#             print(f"  {remote_name} успешно скачан")
+#
+#         except requests.exceptions.RequestException as e:
+#             print(f"  Ошибка при скачивании {remote_name}: {e}")
+#             raise
+#
+#     print("Датасет успешно скачан!")
+#     return "data/conll2003"
+#
+#
+# # print("Скачивание датасета...")
 
 conll_path = "data/conll2003"  # <- ИСПРАВЛЕНО: добавлены скобки
 
@@ -218,7 +222,7 @@ os.makedirs("data", exist_ok=True)
 print("Сохранение данных в файлы...")
 export_to_file("./data/conll_train.txt", conll_data.train)
 export_to_file("./data/conll_val.txt", conll_data.validation)
-
+export_to_file("./data/conll_test.txt", conll_data.test)
 # отладка проверка датасета
 print(f"Train: {len(conll_data.train['tokens'])} примеров")
 print(f"Validation: {len(conll_data.validation['tokens'])} примеров")
@@ -257,6 +261,7 @@ print("Размер словаря:", len(vocabulary))
 # 7. Создание tf.data.Dataset
 train_data = tf.data.TextLineDataset("./data/conll_train.txt")
 val_data = tf.data.TextLineDataset("./data/conll_val.txt")
+test_data = tf.data.TextLineDataset("./data/conll_test.txt")
 
 
 def map_record_to_training_data(record):
@@ -274,20 +279,26 @@ def lowercase_and_convert_to_ids(tokens):
     return lookup_layer(tokens)
 
 
-batch_size = 32
+
 train_dataset = (
     train_data.map(map_record_to_training_data)
     .map(lambda x, y: (lowercase_and_convert_to_ids(x), y))
-    .padded_batch(batch_size)
+    .padded_batch(BATCH_SIZE)
 )
 val_dataset = (
     val_data.map(map_record_to_training_data)
     .map(lambda x, y: (lowercase_and_convert_to_ids(x), y))
-    .padded_batch(batch_size)
+    .padded_batch(BATCH_SIZE)
+)
+
+test_dataset = (
+    test_data.map(map_record_to_training_data)
+    .map(lambda x, y: (lowercase_and_convert_to_ids(x), y))
+    .padded_batch(BATCH_SIZE)
 )
 
 # 8. Инициализация модели и кастомная функция потерь
-ner_model = NERModel(num_tags, len(vocabulary) + 2, embed_dim=32, num_heads=4, ff_dim=64)
+ner_model = NERModel(num_tags, len(vocabulary) + 2, embed_dim=EMBED_DIM, num_heads=NUM_HEADS, ff_dim=FF_DIM)
 
 
 class CustomNonPaddingTokenLoss(keras.losses.Loss):
@@ -305,7 +316,6 @@ class CustomNonPaddingTokenLoss(keras.losses.Loss):
 
 
 # 9. Компиляция и обучение
-tf.config.run_functions_eagerly(True)
 ner_model.compile(
     optimizer="adam",
     loss=CustomNonPaddingTokenLoss(),
@@ -316,10 +326,67 @@ print("Начинаем обучение...")
 history = ner_model.fit(
     train_dataset,
     validation_data=val_dataset,
-    epochs=5,
+    epochs=EPOCHS,
     verbose=1
 )
 
+
+os.makedirs("results", exist_ok=True)
+plt.figure(figsize=(8,5))
+
+plt.plot(history.history["loss"], label="Train Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+
+
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+
+plt.legend()
+
+plt.grid()
+
+plt.savefig("results/loss.png", dpi=300)
+
+plt.close()
+
+
+
+print("\nОценка модели на тестовой выборке...")
+
+y_true = []
+y_pred = []
+
+for batch_x, batch_y in test_dataset:
+
+    predictions = ner_model.predict(batch_x, verbose=0)
+
+    predictions = np.argmax(predictions, axis=-1)
+
+    batch_y = batch_y.numpy()
+
+    for true_seq, pred_seq in zip(batch_y, predictions):
+
+        for true_tag, pred_tag in zip(true_seq, pred_seq):
+
+            # пропускаем PAD
+            if true_tag != 0:
+
+                y_true.append(true_tag)
+                y_pred.append(pred_tag)
+
+accuracy = accuracy_score(y_true, y_pred)
+
+precision, recall, f1, _ = precision_recall_fscore_support(
+    y_true,
+    y_pred,
+    average="weighted",
+    zero_division=0
+)
+
+print(f"\nAccuracy : {accuracy:.4f}")
+print(f"Precision: {precision:.4f}")
+print(f"Recall   : {recall:.4f}")
+print(f"F1-score : {f1:.4f}")
 
 # 10. Пример инференса (предсказания)
 def tokenize_and_convert_to_ids(text):
@@ -349,3 +416,6 @@ tokens = "eu rejects german call to boycott british lamb".split()
 print("\nРезультат NER:")
 for token, tag in zip(tokens, predicted_tags):
     print(f"{token:15} -> {tag}")
+
+
+
